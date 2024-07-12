@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <raylib.h>
@@ -29,6 +30,7 @@ int main() {
 
   DrawTogether* dt = create_draw_together(WIN_WIDTH, WIN_HEIGHT);
 
+  start_check_peers_for_data(peers, dt);
   while(!WindowShouldClose()) {
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
       int x, y;
@@ -56,6 +58,9 @@ int main() {
       connect_to_peer(peers, raw_ip, raw_port);
     }
     BeginDrawing();
+    DrawFPS(0, 0);
+    ClearBackground(RAYWHITE);
+    pthread_mutex_lock(&dt->mutex);
     LinkedList_Node* current_node = dt->points->head;
     Vector2 last_position = {.x = -1, .y = -1};
     while (current_node != NULL) {
@@ -72,8 +77,7 @@ int main() {
       }
       current_node = current_node->next;
     }
-    DrawFPS(0, 0);
-    ClearBackground(RAYWHITE);
+    pthread_mutex_unlock(&dt->mutex);
     EndDrawing();
     update_draw_together(dt);
   }

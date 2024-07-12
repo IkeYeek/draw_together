@@ -5,6 +5,7 @@
 
 #include <time.h>
 #include <raylib.h>
+#include <pthread.h>
 
 #include "queue.h"
 
@@ -17,6 +18,7 @@ typedef struct DrawTogether {
   Queue* points; 
   int width;
   int height;
+  pthread_mutex_t mutex;
 } DrawTogether;
 
 DrawTogether* create_draw_together(int width, int height);

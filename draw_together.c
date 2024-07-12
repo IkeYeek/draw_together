@@ -1,4 +1,5 @@
 #include <bits/time.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -11,6 +12,7 @@ DrawTogether* create_draw_together(int width, int height) {
     exit(EXIT_FAILURE);
   }
   DrawTogether* dt = calloc(1, sizeof(DrawTogether));
+  pthread_mutex_init(&dt->mutex, NULL);
   if (dt == NULL) {
     fprintf(stderr, "allocation error in create_draw_together");
     exit(EXIT_FAILURE);
@@ -40,6 +42,7 @@ void free_draw_together(DrawTogether* dt) {
 }
 
 void insert_point_draw_together(DrawTogether* dt, Vector2 position) {
+  pthread_mutex_lock(&dt->mutex);
   if (position.x >= -1 && position.x < dt->width && position.y >= -1 && position.y < dt->height) {
     DrawTogether_Point* dtp = calloc(1, sizeof(DrawTogether_Point));
     if (dtp == NULL) {
@@ -55,6 +58,7 @@ void insert_point_draw_together(DrawTogether* dt, Vector2 position) {
     dtp->created_at = time_poll.tv_sec + (time_poll.tv_nsec * 1e-9);
     enqueue(dt->points, dtp);
   }
+  pthread_mutex_unlock(&dt->mutex);
 }
 
 void update_draw_together(DrawTogether* dt) {
@@ -63,10 +67,12 @@ void update_draw_together(DrawTogether* dt) {
     fprintf(stderr, "couldn't get time\n");
     exit(EXIT_FAILURE);
   }
+  pthread_mutex_lock(&dt->mutex);
   while(dt->points->head != NULL && dt->points->head->data != NULL 
     && ((DrawTogether_Point*)(dt->points->head->data))->created_at + POINT_LIFESPAN <= time_poll.tv_sec + (time_poll.tv_nsec * 1e-9)) {
     DrawTogether_Point* to_delete = dequeue(dt->points);
     free_draw_together_point(to_delete);
   }
+  pthread_mutex_unlock(&dt->mutex);
 }
 

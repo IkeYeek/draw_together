@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <string.h>
 #include <pthread.h>
@@ -16,6 +17,7 @@
 
 Peers* init_peers() {
   Peers* ps = calloc(1, sizeof(Peers));
+  pthread_mutex_init(&ps->mutex, NULL);
   if (ps == NULL) {
     fprintf(stderr, "allocation failed in init_peers\n");
     exit(EXIT_FAILURE);
@@ -56,6 +58,19 @@ Peers* init_peers() {
   return ps;
 }
 
+void _add_peer(Peers* ps, Peer* p) {
+  pthread_mutex_lock(&ps->mutex);
+  ps->nb_peers += 1;
+  ps->peers = realloc(ps->peers, sizeof(Peer) * ps->nb_peers);
+  if (ps->peers == NULL) {
+    fprintf(stderr, "reallocation error in check_for_peers thread\n");
+    exit(EXIT_FAILURE);
+  }
+  ps->peers[ps->nb_peers - 1] = p;
+  pthread_mutex_unlock(&ps->mutex);
+  printf("New peer registered\n");
+}
+
 void* _check_for_peers(void* peers_void_ptr) {
   Peers* ps = (Peers*) peers_void_ptr;
   while(1) {
@@ -75,15 +90,7 @@ void* _check_for_peers(void* peers_void_ptr) {
     }
     p->tcp_socket_fd = new_client_socket;
     p->socket = new_client;
-    //todo add mutex here
-    ps->nb_peers += 1;
-    ps->peers = realloc(ps->peers, sizeof(Peer) * ps->nb_peers);
-    if (ps->peers == NULL) {
-      fprintf(stderr, "reallocation error in check_for_peers thread\n");
-      exit(EXIT_FAILURE);
-    }
-    ps->peers[ps->nb_peers - 1] = p;
-    printf("New peer registered\n");
+    _add_peer(peers_void_ptr, p);
   }  
 }
 
@@ -115,10 +122,12 @@ void connect_to_peer(Peers* ps, char* raw_ip, char* raw_port) {
     fprintf(stderr, "error connecting to peer at %s:%ld", raw_ip, port);
     exit(EXIT_FAILURE);
   }
+  _add_peer(ps, p); 
   printf("connected to peer at %s:%ld\n", raw_ip, port);
 }
 
 void send_to_peers(Peers* ps, Vector2 pt) {
+  pthread_mutex_lock(&ps->mutex);
   for (int i = 0; i < ps->nb_peers; i += 1) {
     Peer* current_peer = ps->peers[i];
     size_t len = sizeof(pt);
@@ -134,10 +143,90 @@ void send_to_peers(Peers* ps, Vector2 pt) {
       total_sent += n;
     }
   }
+  pthread_mutex_unlock(&ps->mutex);
+}
+
+struct check_peers_for_data_args {
+  Peers* ps;
+  DrawTogether* dt;
+};
+
+void* _start_check_peers_for_data(void *args_void_ptr) {
+  struct check_peers_for_data_args* args = (struct check_peers_for_data_args*) args_void_ptr;
+  fd_set readfds;
+  int max_sd, sd, activity, valread;
+  char buffer[BUFFER_SIZE];
+  struct timeval tv;
+
+  while (1) {
+    FD_ZERO(&readfds);
+    max_sd = -1;
+    pthread_mutex_lock(&args->ps->mutex);
+    for (int i = 0; i < args->ps->nb_peers; i++) {
+      sd = args->ps->peers[i]->tcp_socket_fd;
+
+      if(sd > 0) {
+        FD_SET(sd, &readfds);
+      }
+
+      if(sd > max_sd) {
+        max_sd = sd;
+      }
+    }
+    pthread_mutex_unlock(&args->ps->mutex);
+
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+
+    activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
+
+    if (activity == -1) {
+      perror("select error");
+      exit(EXIT_FAILURE);
+    } else if (activity == 0) {
+      // Timeout occurred, no data received
+      continue;
+    }
+
+    pthread_mutex_lock(&args->ps->mutex);
+    for (int i = 0; i < args->ps->nb_peers; i++) {
+      sd = args->ps->peers[i]->tcp_socket_fd;
+
+      if (FD_ISSET(sd, &readfds)) {
+        if ((valread = read(sd, buffer, sizeof(Vector2))) == 0) {
+          printf("Peer disconnected\n");
+          close(sd);
+          args->ps->peers[i]->tcp_socket_fd = 0;
+        }
+        else if (valread == sizeof(Vector2)) {
+          Vector2 *received_point = (Vector2*)buffer;
+          insert_point_draw_together(args->dt, *received_point);
+        }
+        else {
+          printf("Received unexpected data size: %d\n", valread);
+        }
+      }
+    }
+    pthread_mutex_unlock(&args->ps->mutex);
+  }
+
+  return NULL;
+}
+
+void start_check_peers_for_data(Peers *ps, DrawTogether *dt) {
+  int pthread_ret;
+  struct check_peers_for_data_args* thread_args = calloc(1, sizeof(struct check_peers_for_data_args)); // todo free this
+  thread_args->ps = ps;
+  thread_args->dt = dt;
+  if ((pthread_ret = pthread_create(&ps->pthread_client_fd, NULL, _start_check_peers_for_data, (void*) thread_args))) {
+    fprintf(stderr, "error creating client pthread\n");
+    exit(pthread_ret);
+  }
 }
 
 void free_peers(Peers* ps) {
   pthread_cancel(ps->pthread_server_fd);
+  pthread_cancel(ps->pthread_client_fd);
   for (int i = 0; i < ps->nb_peers; i += 1) {
     Peer* p = ps->peers[i];
     shutdown(p->tcp_socket_fd, SHUT_RDWR);
