@@ -119,11 +119,11 @@ void connect_to_peer(Peers* ps, char* raw_ip, char* raw_port) {
   p->socket.sin_port = htons(port);
   //todo add checks for addr and port
   if (connect(p->tcp_socket_fd, (struct sockaddr*)&p->socket, sizeof(p->socket))) {
-    fprintf(stderr, "error connecting to peer at %s:%ld", raw_ip, port);
-    exit(EXIT_FAILURE);
+    fprintf(stderr, "error connecting to peer at %u:%u (%d)\n", p->socket.sin_addr.s_addr, p->socket.sin_port, errno);
+  } else {
+    _add_peer(ps, p); 
+    printf("connected to peer at %s:%ld\n", raw_ip, port);
   }
-  _add_peer(ps, p); 
-  printf("connected to peer at %s:%ld\n", raw_ip, port);
 }
 
 void send_to_peers(Peers* ps, Vector2 pt) {
@@ -134,13 +134,17 @@ void send_to_peers(Peers* ps, Vector2 pt) {
     size_t total_sent = 0;
     ssize_t n;
     while (total_sent < len) {
-      n = send(current_peer->tcp_socket_fd, ((char*)&pt)+total_sent, len - total_sent, 0);
-      if (n == -1) {
-        fprintf(stderr, "send error");
-        exit(EXIT_FAILURE);
-        break;
-      }
-      total_sent += n;
+      bool chunk_sent = false;
+      #define TRIES 3
+      for (int i = 0; i < TRIES && !chunk_sent; i += 1) {
+        n = send(current_peer->tcp_socket_fd, ((char*)&pt)+total_sent, len - total_sent, 0);
+        if (n == -1 && i == TRIES - 1) {
+          fprintf(stderr, "send error");
+        } else if (n == -1) {
+          sleep(1);
+        }
+        total_sent += n;
+      } 
     }
   }
   pthread_mutex_unlock(&ps->mutex);
@@ -181,10 +185,9 @@ void* _start_check_peers_for_data(void *args_void_ptr) {
     activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
 
     if (activity == -1) {
-      perror("select error");
+      fprintf(stderr, "select error\n");
       exit(EXIT_FAILURE);
     } else if (activity == 0) {
-      // Timeout occurred, no data received
       continue;
     }
 

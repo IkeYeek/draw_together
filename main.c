@@ -13,7 +13,7 @@
 #define TARGET_FRAMERATE 300
 
 void init() {
-  InitWindow(WIN_WIDTH, WIN_HEIGHT, "test"); 
+  InitWindow(WIN_WIDTH, WIN_HEIGHT, "Draw Together"); 
   SetTargetFPS(TARGET_FRAMERATE);
 }
 
@@ -47,6 +47,7 @@ int main() {
         .x = -1,
         .y = -1,
       };
+      send_to_peers(peers, nv);
       insert_point_draw_together(dt, nv);
     } else if (IsKeyDown(KEY_C)) {
       printf("Enter peer ip\n");

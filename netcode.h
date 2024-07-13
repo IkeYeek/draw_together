@@ -5,7 +5,7 @@
 #include <netinet/in.h>
 #include <raylib.h>
 
-#define SERVER_PORT 1337
+#define SERVER_PORT 1338
 #define BUFFER_SIZE 1024
 
 typedef struct Peer {
